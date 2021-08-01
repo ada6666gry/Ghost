@@ -6,16 +6,21 @@
 //
 // Converts normal HTML into AMP HTML with Amperize module and uses a cache to return it from
 // there if available. The cacheId is a combination of `updated_at` and the `slug`.
-const Promise = require('bluebird');
+const Promise = require('bluebird'),
+    moment = require('moment'),
+    proxy = require('../../../../helpers/proxy'),
+    SafeString = proxy.SafeString,
+    logging = proxy.logging,
+    i18n = proxy.i18n,
+    errors = proxy.errors,
+    urlService = require('../../../../services/url'),
+    amperizeCache = {};
 
-const moment = require('moment');
-const {SafeString, logging, errors} = require('../../../../services/proxy');
-const amperizeCache = {};
-let allowedAMPTags = [];
-let allowedAMPAttributes = {};
-let amperize = null;
-let ampHTML = '';
-let cleanHTML = '';
+let allowedAMPTags = [],
+    allowedAMPAttributes = {},
+    amperize = null,
+    ampHTML = '',
+    cleanHTML = '';
 
 allowedAMPTags = ['html', 'body', 'article', 'section', 'nav', 'aside', 'h1', 'h2',
     'h3', 'h4', 'h5', 'h6', 'header', 'footer', 'address', 'p', 'hr',
@@ -31,8 +36,8 @@ allowedAMPTags = ['html', 'body', 'article', 'section', 'nav', 'aside', 'h1', 'h
     'table', 'caption', 'colgroup', 'col', 'tbody', 'thead', 'tfoot', 'tr', 'td',
     'th', 'button', 'noscript', 'acronym', 'center', 'dir', 'hgroup', 'listing',
     'multicol', 'nextid', 'nobr', 'spacer', 'strike', 'tt', 'xmp', 'amp-img',
-    'amp-video', 'amp-ad', 'amp-embed', 'amp-anim', 'amp-iframe', 'amp-youtube',
-    'amp-pixel', 'amp-audio', 'O:P'];
+    'amp-video', 'amp-ad', 'amp-embed', 'amp-anim', 'amp-iframe', 'amp-pixel',
+    'amp-audio', 'O:P'];
 
 allowedAMPAttributes = {
     '*': ['itemid', 'itemprop', 'itemref', 'itemscope', 'itemtype', 'accesskey', 'class', 'dir', 'draggable',
@@ -105,8 +110,7 @@ allowedAMPAttributes = {
     'amp-anim': ['media', 'noloading', 'alt', 'attribution', 'placeholder', 'src', 'srcset', 'width', 'height', 'layout'],
     'amp-audio': ['src', 'width', 'height', 'autoplay', 'loop', 'muted', 'controls'],
     'amp-iframe': ['src', 'srcdoc', 'width', 'height', 'layout', 'frameborder', 'allowfullscreen', 'allowtransparency',
-        'sandbox', 'referrerpolicy'],
-    'amp-youtube': ['src', 'width', 'height', 'layout', 'frameborder', 'autoplay', 'loop', 'data-videoid', 'data-live-channelid']
+        'sandbox', 'referrerpolicy']
 };
 
 function getAmperizeHTML(html, post) {
@@ -114,10 +118,13 @@ function getAmperizeHTML(html, post) {
         return;
     }
 
-    let Amperize = require('amperize');
-    let startedAtMoment = moment();
+    let Amperize = require('amperize'),
+        startedAtMoment = moment();
 
     amperize = amperize || new Amperize();
+
+    // make relative URLs abolute
+    html = urlService.utils.makeAbsoluteUrls(html, urlService.utils.urlFor('home', true), post.url).html();
 
     if (!amperizeCache[post.id] || moment(new Date(amperizeCache[post.id].updated_at)).diff(new Date(post.updated_at)) < 0) {
         return new Promise((resolve) => {
@@ -128,11 +135,11 @@ function getAmperizeHTML(html, post) {
                     if (err.src) {
                         // This is a valid 500 GhostError because it means the amperize parser is unable to handle some Ghost HTML.
                         logging.error(new errors.GhostError({
-                            message: `AMP HTML couldn't be parsed: ${err.src}`,
+                            message: `AMP HTML couldn't get parsed: ${err.src}`,
                             code: 'AMP_PARSER_ERROR',
                             err: err,
                             context: post.url,
-                            help: 'Please share this error on GitHub or https://forum.ghost.org'
+                            help: i18n.t('errors.apps.appWillNotBeLoaded.help')
                         }));
                     } else {
                         logging.error(new errors.GhostError({err, code: 'AMP_PARSER_ERROR'}));
@@ -155,12 +162,11 @@ function getAmperizeHTML(html, post) {
 }
 
 function ampContent() {
-    let sanitizeHtml = require('sanitize-html');
-    let cheerio = require('cheerio');
-
-    let amperizeHTML = {
-        amperize: getAmperizeHTML(this.html, this)
-    };
+    let sanitizeHtml = require('sanitize-html'),
+        cheerio = require('cheerio'),
+        amperizeHTML = {
+            amperize: getAmperizeHTML(this.html, this)
+        };
 
     return Promise.props(amperizeHTML).then((result) => {
         let $ = null;
